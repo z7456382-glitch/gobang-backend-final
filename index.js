@@ -8,63 +8,74 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 app.use(cors());
 app.use(express.json());
 
-// --- 1. 初始化 Gemini AI (使用最穩定的 Pro 型號) ---
+// 1. 初始化 Google AI (請確保 Render 環境變數 GEMINI_API_KEY 已填寫)
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-// gemini-pro 是相容性最強的版本，能避開 404 錯誤
-const aiModel = genAI.getGenerativeModel({ model: "gemini-pro" });
 
 // --- 2. AI 下棋 API ---
 app.post('/api/ai-move', async (req, res) => {
+  const { board } = req.body;
+  
   try {
-    const { board } = req.body;
-    console.log("🧠 超強 AI (Gemini-Pro) 正在計算棋步...");
+    console.log("🧠 Gemini AI 正在思考中...");
 
-    // 將棋盤轉化為文字，協助 AI 辨識
-    const boardString = board.map((row, i) => 
-      `R${i.toString().padStart(2, ' ')}: ${row.join(' ')}`
-    ).join('\n');
+    // 使用最穩定的型號名稱
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
     const prompt = `
-      你是五子棋大師。你執白子 (2)，對手執黑子 (1)。
-      棋盤 15x15，0 是空位。
+      你是五子棋大師，執白子(2)，對手執黑子(1)。
+      棋盤狀態如下 (15x15)：
+      ${JSON.stringify(board)}
       
-      【棋盤狀態】
-      ${boardString}
-
-      【指令】
-      1. 優先達成五連。
-      2. 必須擋住對手的活三或活四。
-      3. 只能下在 0 的位置。
-      
-      請只回傳 JSON：{"row": x, "col": y, "reason": "說明"}
+      請分析棋盤，給出你的下一步位置。
+      規定：
+      1. 必須下在為 0 的空位。
+      2. 只回傳 JSON 格式：{"row": x, "col": y, "reason": "理由"}
     `;
     
-    const result = await aiModel.generateContent(prompt);
-    const text = result.response.text();
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
     
-    // 擷取 JSON
+    // 擷取並解析 JSON
     const jsonMatch = text.match(/\{.*\}/s);
-    if (!jsonMatch) throw new Error("格式錯誤");
+    if (!jsonMatch) throw new Error("AI 回傳格式不符合 JSON");
     
-    const moveData = JSON.parse(jsonMatch[0]);
-    console.log(`✅ AI 下在 [${moveData.row}, ${moveData.col}]`);
-    
-    res.json({ row: moveData.row, col: moveData.col });
+    const move = JSON.parse(jsonMatch[0]);
+    console.log(`✅ AI 成功下棋: [${move.row}, ${move.col}] - ${move.reason}`);
+    res.json({ row: move.row, col: move.col });
+
   } catch (error) {
-    console.error("❌ AI 思考失敗:", error.message);
-    // 保險機制：如果 AI 失敗，隨機找個中心點位置下棋，不讓遊戲卡住
-    res.json({ row: 7, col: 7 }); 
+    // --- 🚨 備用接管系統：如果 Google API 壞掉，就執行這段 ---
+    console.error("❌ AI 思考失敗 (原因: " + error.message + ")，啟用隨機接管模式。");
+    
+    let emptyCells = [];
+    for (let r = 0; r < 15; r++) {
+      for (let c = 0; c < 15; c++) {
+        if (board[r][c] === 0) {
+          emptyCells.push({ row: r, col: c });
+        }
+      }
+    }
+
+    // 從所有空位中隨機選一個，確保遊戲能繼續
+    const fallbackMove = emptyCells.length > 0 
+      ? emptyCells[Math.floor(Math.random() * emptyCells.length)] 
+      : { row: 7, col: 7 };
+
+    console.log(`⚠️ 已自動切換至隨機座標: [${fallbackMove.row}, ${fallbackMove.col}]`);
+    res.json(fallbackMove);
   }
 });
 
 // --- 3. 失敗報告 API ---
 app.post('/api/report-defeat', (req, res) => {
-  console.log("📌 收到戰敗訊息。");
+  console.log("🏳️ 玩家回報 AI 輸了。");
   res.send("AI 已收到教訓");
 });
 
 // --- 啟動伺服器 ---
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log(`🚀 穩定版 AI 後端已啟動！Port: ${PORT}`);
+  console.log(`🚀 五子棋後端已啟動！`);
+  console.log(`📡 監聽 Port: ${PORT}`);
 });

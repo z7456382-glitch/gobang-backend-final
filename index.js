@@ -3,97 +3,80 @@ const express = require('express');
 const app = express();
 const http = require('http').createServer(app);
 const cors = require('cors');
+const mongoose = require('mongoose');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-// --- 1. 基礎設定 ---
 const PORT = process.env.PORT || 10000;
+app.use(cors({ origin: "*" }));
+app.use(express.json());
 
-// 允許所有網域連線 (解決 Vercel 預覽網址斷線問題)
-app.use(cors({
-  origin: "*",
-  methods: ["GET", "POST"]
-}));
-app.use(express.json()); // 必備：讓伺服器看得懂前端傳來的 JSON 棋盤資料
+// 1. 連接 MongoDB
+mongoose.connect(process.env.MONGODB_URI)
+  .then(() => console.log("✅ 記憶資料庫已連線"))
+  .catch(err => console.error("❌ 資料庫連線失敗:", err));
 
-// --- 2. 初始化 Gemini AI ---
-const API_KEY = process.env.GEMINI_API_KEY; 
+// 定義失敗紀錄模型
+const MemorySchema = new mongoose.Schema({
+  lastMoves: String,
+  timestamp: { type: Date, default: Date.now }
+});
+const Memory = mongoose.model('Memory', MemorySchema);
 
-if (!API_KEY) {
-  console.error("❌ 錯誤：Render 環境變數中找不到 GEMINI_API_KEY！");
-  // 這裡不直接結束程序，讓伺服器能啟動，但 API 會回報錯誤
-}
-
-const genAI = new GoogleGenerativeAI(API_KEY || "NO_KEY");
+// 2. 初始化 AI
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-// 根路徑測試
-app.get('/', (req, res) => {
-  res.send('五子棋 AI 伺服器已啟動！請確保 Render 環境變數已設定 GEMINI_API_KEY。');
-});
-
-// --- 3. AI 下棋 API 接口 ---
+// 3. AI 下棋 API (強化大腦版)
 app.post('/api/ai-move', async (req, res) => {
-  const { board, playerColor } = req.body; 
-
-  if (!board || !playerColor) {
-    return res.status(400).json({ error: "缺少棋盤資料或顏色" });
-  }
-
-  if (!API_KEY) {
-    return res.status(500).json({ error: "伺服器未設定 API Key" });
-  }
-
-  // 建立訓練 Gemini 的 Prompt
-  const prompt = `
-    你是一個專業的五子棋（Gobang/Gomoku）AI 對手。
-    目前的棋盤狀態是一個 15x15 的二維陣列（0:空位, 1:黑棋, 2:白棋）。
-    你是玩家 ${playerColor === 2 ? '白棋 (2)' : '黑棋 (1)'}。
-    
-    分析規則：
-    1. 如果你能連成五子，立刻下在那裡。
-    2. 如果對手即將連成五子，立刻擋住。
-    3. 盡量佔領中心區域。
-    4. 必須在陣列中找一個值為 0 的空位。
-
-    目前棋盤：
-    ${JSON.stringify(board)}
-
-    請只回傳 JSON 格式的下一步座標，例如：{"row": 7, "col": 8}。不要有任何解釋文字。
-  `;
-
   try {
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = response.text().trim();
-    
-    // 嘗試解析 AI 回傳的 JSON
-    // 有時候 AI 會回傳 ```json {...} ```，我們用正則表達式過濾
-    const jsonMatch = text.match(/\{.*\}/s);
-    if (jsonMatch) {
-      const aiMove = JSON.parse(jsonMatch[0]);
-      console.log(`🤖 AI 下在: [${aiMove.row}, ${aiMove.col}]`);
-      res.json(aiMove);
-    } else {
-      throw new Error("AI 回傳格式非 JSON");
-    }
+    const { board, playerColor } = req.body;
 
+    // 抓取最近 5 次失敗經驗
+    const pastDefeats = await Memory.find().sort({ timestamp: -1 }).limit(5);
+    const lessons = pastDefeats.map((m, i) => `教訓 ${i+1}: ${m.lastMoves}`).join('\n');
+
+    const prompt = `
+      你是一位極度渴望勝利的五子棋特級大師。你是白棋 (2)，對手是黑棋 (1)。
+      
+      【座標指南】Row 0~14, Col 0~14。[7,7]是中心。
+      
+      【歷史慘敗紀錄 - 絕對不准再犯！】
+      ${lessons || "目前尚無失敗紀錄，你是無敵的。"}
+
+      【當前棋盤視覺化】
+      (1:黑, 2:白, 0:空)
+      ${board.map((r, i) => `R${i.toString().padStart(2, ' ')} | ${r.join(' ')}`).join('\n')}
+      -------------------------------
+      Col: 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14
+
+      【大師級思維】
+      - 掃描對手(1)是否有連續 3 或 4 個棋子？有的話立刻擋住！
+      - 優先佔領中心區域。
+      - 如果你能連成 5 子，立刻下在那裡贏得比賽。
+
+      請分析後，只回傳 JSON：{"row": x, "col": y}
+    `;
+
+    const result = await model.generateContent(prompt);
+    const text = (await result.response).text();
+    const jsonMatch = text.match(/\{.*\}/s);
+    res.json(JSON.parse(jsonMatch[0]));
   } catch (error) {
-    console.error("❌ Gemini API 發生錯誤:", error);
-    
-    // 備援方案：如果 AI 壞了，隨機找一個空格下，確保遊戲不卡死
-    const emptyCells = [];
-    for (let r = 0; r < 15; r++) {
-      for (let c = 0; c < 15; c++) {
-        if (board[r][c] === 0) emptyCells.push({ row: r, col: c });
-      }
-    }
-    const randomMove = emptyCells[Math.floor(Math.random() * emptyCells.length)];
-    res.json(randomMove);
+    console.error("AI Error:", error);
+    res.status(500).json({ error: "AI 思考異常" });
   }
 });
 
-// --- 4. 啟動伺服器 ---
-http.listen(PORT, () => {
-  console.log(`🚀 伺服器運作中：http://localhost:${PORT}`);
-  console.log(`💡 請確保已將此網址填入前端 BACKEND_URL`);
+// 4. 接收失敗報告 API
+app.post('/api/report-defeat', async (req, res) => {
+  try {
+    const { lastMoves } = req.body;
+    await Memory.create({ lastMoves });
+    console.log("📌 AI 已記下失敗教訓");
+    res.send("AI 感到羞恥並記住了教訓");
+  } catch (e) {
+    res.status(500).send("紀錄失敗");
+  }
 });
+
+http.listen(PORT, () => console.log(`🚀 大腦啟動於 ${PORT}`));

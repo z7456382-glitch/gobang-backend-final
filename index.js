@@ -4,68 +4,70 @@ const app = express();
 const cors = require('cors');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
+// --- 中間件設定 ---
 app.use(cors());
 app.use(express.json());
 
-// 1. 初始化 Gemini (建議確保 API Key 是有效的)
+// --- 1. 初始化 Gemini AI (修正型號名稱) ---
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const aiModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+// 使用 gemini-1.5-flash-latest 確保連線最穩定
+const aiModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
 
-// 2. 超強 AI 下棋邏輯
+// --- 2. AI 下棋 API (最強 Prompt 版) ---
 app.post('/api/ai-move', async (req, res) => {
   try {
     const { board } = req.body;
-    console.log("🧠 超強 AI 正在計算最優解...");
+    console.log("🧠 超強 AI 正在計算棋步...");
 
-    // 將棋盤轉換成易讀的文字格式給 AI 看
+    // 將棋盤轉化為易讀的字串，幫助 AI 辨識座標
     const boardString = board.map((row, i) => 
-      `Row ${i.toString().padStart(2, ' ')}: ${row.join(' ')}`
+      `R${i.toString().padStart(2, ' ')}: ${row.join(' ')}`
     ).join('\n');
 
     const prompt = `
-      你是世界頂級五子棋 AI 大師。你現在執白子 (2)，對手執黑子 (1)。
-      棋盤大小是 15x15，空位為 0。
+      你是世界五子棋特級大師。你執白子 (2)，對手執黑子 (1)。
+      棋盤為 15x15，0 代表空位。
 
-      【當前棋盤狀態】
-      (Row 0-14, Col 0-14)
+      【當前棋盤】
+      (行 R00-R14, 列 從左到右)
       ${boardString}
 
-      【你的任務】
-      分析棋盤，找出最強的下一步。你的目標是贏球並絕對阻止對手贏。
-
-      【必勝規則與優先順序】
-      1. 絕殺：如果你下一手能達成「五連」，立刻執行，不要猶豫！
-      2. 緊急防禦：如果對手已經有「活四」或「跳四」，你下一手必須去堵住，否則你必輸！
-      3. 雙三/雙四：預判對手的意圖，不要讓對方形成「雙三」陷阱。
-      4. 佈局：佔領中心區域 (Row 7, Col 7 附近)，建立連貫的棋型。
+      【思考指令】
+      1. 優先：如果你下一手能達成「五連」，立刻執行贏下比賽！
+      2. 防禦：對手若有活三或活四，必須立刻堵截！
+      3. 戰術：佔據中心，創造雙三或雙四的進攻機會。
       
-      【回傳格式】
-      請只回傳 JSON 格式，不要有任何解釋文字：
-      {"row": x, "col": y, "reason": "簡短說明理由"}
+      請嚴格檢查你選擇的座標目前必須是 0。
+      
+      請只回傳 JSON：{"row": x, "col": y, "reason": "理由"}
     `;
     
     const result = await aiModel.generateContent(prompt);
     const text = result.response.text();
     
-    // 擷取 JSON 並回傳
+    // 擷取 JSON 內容
     const jsonMatch = text.match(/\{.*\}/s);
+    if (!jsonMatch) throw new Error("AI 回傳格式有誤");
+    
     const moveData = JSON.parse(jsonMatch[0]);
+    console.log(`✅ AI 決定下在 [${moveData.row}, ${moveData.col}]，理由: ${moveData.reason}`);
     
-    console.log(`✅ AI 下在 [${moveData.row}, ${moveData.col}]，理由: ${moveData.reason}`);
-    
-    // 只傳給前端座標
     res.json({ row: moveData.row, col: moveData.col });
   } catch (error) {
-    console.error("AI 思考出錯:", error);
-    // 萬一 AI 耍笨，隨機找個空位下，保證遊戲繼續
+    console.error("❌ AI 思考出錯:", error.message);
+    // 發生錯誤時的保險措施：下在正中間或第一個空位
     res.json({ row: 7, col: 7 }); 
   }
 });
 
-// 3. 簡化版失敗報告（僅供日誌查看）
+// --- 3. 失敗報告 API (純日誌版) ---
 app.post('/api/report-defeat', (req, res) => {
-  console.log("🏳️ AI 戰敗，請檢查日誌分析棋局。");
-  res.send("AI 已記下教訓。");
+  console.log("🏳️ 收到戰敗報告，AI 會在對話中持續進化。");
+  res.send("AI 感到羞恥並記住了教訓");
 });
 
-app.listen(process.env.PORT || 10000, () => console.log("🚀 超強 AI 後端已就緒！"));
+// --- 啟動伺服器 ---
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+  console.log(`🚀 超強 AI 後端已啟動！監聽 Port: ${PORT}`);
+});

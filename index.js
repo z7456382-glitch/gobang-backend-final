@@ -8,7 +8,8 @@ const Groq = require('groq-sdk');
 app.use(cors());
 app.use(express.json());
 
-// --- 1. 初始化 Groq AI (讀取 Render 中的 GROQ_API_KEY) ---
+// --- 1. 初始化 Groq AI ---
+// 請確保你在 Render 的 Environment Variables 中設定了 GROQ_API_KEY
 const groq = new Groq({ 
   apiKey: process.env.GROQ_API_KEY 
 });
@@ -31,9 +32,9 @@ app.post('/api/ai-move', async (req, res) => {
           content: `當前棋盤狀態：${JSON.stringify(board)}`
         }
       ],
-      model: "llama3-70b-8192", // 這是目前最強且免費的型號
+      model: "llama3-70b-8192", 
       temperature: 0.5,
-      response_format: { type: "json_object" } // 強制輸出 JSON
+      response_format: { type: "json_object" } 
     });
 
     // 解析 AI 回傳的座標

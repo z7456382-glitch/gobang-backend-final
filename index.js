@@ -4,13 +4,16 @@ const app = express();
 const cors = require('cors');
 const Groq = require('groq-sdk');
 
+// --- 中間件設定 ---
 app.use(cors());
 app.use(express.json());
 
-// 1. 初始化 Groq (讀取新的環境變數)
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+// --- 1. 初始化 Groq AI (讀取 Render 中的 GROQ_API_KEY) ---
+const groq = new Groq({ 
+  apiKey: process.env.GROQ_API_KEY 
+});
 
-// 2. AI 下棋 API
+// --- 2. AI 下棋 API (Groq Llama-3 版) ---
 app.post('/api/ai-move', async (req, res) => {
   const { board } = req.body;
   
@@ -21,41 +24,54 @@ app.post('/api/ai-move', async (req, res) => {
       messages: [
         {
           role: "system",
-          content: "你是五子棋大師，執白子(2)。請分析 15x15 棋盤（0是空位，1是黑，2是白），找出最強的一手。你必須只回傳 JSON 格式：{\"row\": x, \"col\": y}"
+          content: "你是五子棋特級大師，執白子(2)。請分析 15x15 棋盤（0是空位，1是黑子，2是白子）。找出最強的下一步以贏得比賽或擋住對手。你必須『只回傳』JSON 格式，不要有任何廢話：{\"row\": x, \"col\": y}"
         },
         {
           role: "user",
-          content: `目前棋盤狀態：${JSON.stringify(board)}`
+          content: `當前棋盤狀態：${JSON.stringify(board)}`
         }
       ],
-      model: "llama3-70b-8192", // 這是目前最聰明且免費的型號
-      response_format: { type: "json_object" }
+      model: "llama3-70b-8192", // 這是目前最強且免費的型號
+      temperature: 0.5,
+      response_format: { type: "json_object" } // 強制輸出 JSON
     });
 
-    // 解析 Groq 回傳的內容
+    // 解析 AI 回傳的座標
     const content = completion.choices[0].message.content;
     const move = JSON.parse(content);
     
-    console.log(`✅ AI 成功下棋: [${move.row}, ${move.col}]`);
+    console.log(`✅ AI 思考成功，落子座標: [${move.row}, ${move.col}]`);
     res.json({ row: move.row, col: move.col });
 
   } catch (error) {
-    console.error("❌ Groq 思考失敗:", error.message);
+    // --- 🚨 核心備援邏輯：若 API 出錯，自動執行隨機下棋 ---
+    console.error("❌ Groq 引擎報錯:", error.message);
     
-    // 備援：如果連 Groq 都掛了，隨機找個空位下棋
     let emptyCells = [];
-    for(let r=0; r<15; r++) {
-      for(let c=0; c<15; c++) {
-        if(board[r][c] === 0) emptyCells.push({row: r, col: c});
+    for (let r = 0; r < 15; r++) {
+      for (let c = 0; c < 15; c++) {
+        if (board[r][c] === 0) emptyCells.push({ row: r, col: c });
       }
     }
-    const fallback = emptyCells[Math.floor(Math.random() * emptyCells.length)];
-    res.json(fallback || { row: 7, col: 7 });
+
+    const fallbackMove = emptyCells.length > 0 
+      ? emptyCells[Math.floor(Math.random() * emptyCells.length)] 
+      : { row: 7, col: 7 };
+
+    console.log(`⚠️ 已執行備援座標: [${fallbackMove.row}, ${fallbackMove.col}]`);
+    res.json(fallbackMove);
   }
 });
 
-app.post('/api/report-defeat', (req, res) => res.send("OK"));
+// --- 3. 戰敗報告 API ---
+app.post('/api/report-defeat', (req, res) => {
+  console.log("🏳️ AI 承認失敗。");
+  res.send("OK");
+});
 
-// 啟動監聽
+// --- 啟動伺服器 ---
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`🚀 Groq AI 後端已啟動！監聽 Port: ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`🚀 Groq 飛速版後端已啟動！`);
+  console.log(`📡 正在監聽 Port: ${PORT}`);
+});

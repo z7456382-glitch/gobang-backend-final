@@ -2,68 +2,60 @@ require('dotenv').config();
 const express = require('express');
 const app = express();
 const cors = require('cors');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const Groq = require('groq-sdk');
 
 app.use(cors());
 app.use(express.json());
 
-// --- 1. 初始化與診斷 ---
-const apiKey = (process.env.GEMINI_API_KEY || "").trim();
-const genAI = new GoogleGenerativeAI(apiKey);
+// 1. 初始化 Groq (讀取新的環境變數)
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// 啟動時在 Logs 檢查 Key 是否讀取成功（僅顯示頭尾保護安全）
-const keyCheck = apiKey.length > 10 
-  ? `${apiKey.substring(0, 6)}...${apiKey.substring(apiKey.length - 4)}` 
-  : "❌ KEY 格式錯誤或不存在";
-console.log(`📡 後端啟動中... 目前讀取的 API Key: ${keyCheck}`);
-
-// --- 2. AI 下棋 API ---
+// 2. AI 下棋 API
 app.post('/api/ai-move', async (req, res) => {
   const { board } = req.body;
   
   try {
-    console.log("🧠 正在呼叫 Gemini-1.5-Flash 進行思考...");
+    console.log("🚀 Groq Llama-3 正在急速思考...");
 
-    // 使用最標準的型號獲取方式
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const completion = await groq.chat.completions.create({
+      messages: [
+        {
+          role: "system",
+          content: "你是五子棋大師，執白子(2)。請分析 15x15 棋盤（0是空位，1是黑，2是白），找出最強的一手。你必須只回傳 JSON 格式：{\"row\": x, \"col\": y}"
+        },
+        {
+          role: "user",
+          content: `目前棋盤狀態：${JSON.stringify(board)}`
+        }
+      ],
+      model: "llama3-70b-8192", // 這是目前最聰明且免費的型號
+      response_format: { type: "json_object" }
+    });
 
-    const prompt = `你是五子棋大師，執白(2)。棋盤：${JSON.stringify(board)}。請只回傳 JSON：{"row": x, "col": y}`;
+    // 解析 Groq 回傳的內容
+    const content = completion.choices[0].message.content;
+    const move = JSON.parse(content);
     
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = response.text();
-    
-    // 解析 JSON 部分
-    const jsonMatch = text.match(/\{.*\}/s);
-    if (!jsonMatch) throw new Error("AI 回傳格式非 JSON");
-    
-    const move = JSON.parse(jsonMatch[0]);
-    console.log(`✅ AI 思考成功: [${move.row}, ${move.col}]`);
+    console.log(`✅ AI 成功下棋: [${move.row}, ${move.col}]`);
     res.json({ row: move.row, col: move.col });
 
   } catch (error) {
-    // --- 🚨 核心備援邏輯：API 故障時自動隨機下棋 ---
-    console.error(`❌ API 錯誤 (${error.message})。切換為隨機下棋模式。`);
+    console.error("❌ Groq 思考失敗:", error.message);
     
+    // 備援：如果連 Groq 都掛了，隨機找個空位下棋
     let emptyCells = [];
-    for (let r = 0; r < 15; r++) {
-      for (let c = 0; c < 15; c++) {
-        if (board[r][c] === 0) emptyCells.push({ row: r, col: c });
+    for(let r=0; r<15; r++) {
+      for(let c=0; c<15; c++) {
+        if(board[r][c] === 0) emptyCells.push({row: r, col: c});
       }
     }
-
-    const fallbackMove = emptyCells.length > 0 
-      ? emptyCells[Math.floor(Math.random() * emptyCells.length)] 
-      : { row: 7, col: 7 };
-
-    console.log(`⚠️ 備援機制執行座標: [${fallbackMove.row}, ${fallbackMove.col}]`);
-    res.json(fallbackMove);
+    const fallback = emptyCells[Math.floor(Math.random() * emptyCells.length)];
+    res.json(fallback || { row: 7, col: 7 });
   }
 });
 
 app.post('/api/report-defeat', (req, res) => res.send("OK"));
 
+// 啟動監聽
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`🚀 五子棋後端已就緒！Port: ${PORT}`);
-});
+app.listen(PORT, () => console.log(`🚀 Groq AI 後端已啟動！監聽 Port: ${PORT}`));
